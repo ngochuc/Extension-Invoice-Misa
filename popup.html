@@ -1,23 +1,35 @@
 <!DOCTYPE html>
 <html>
-<body style="font-family: sans-serif; padding: 10px">
+<head>
+  <meta charset="UTF-8">
+  <title>Tạo hóa đơn MISA</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
   <h3>Tạo hóa đơn MISA</h3>
-  <button id="send">Gửi hóa đơn test</button>
+  
+  <div class="form-group">
+    <label for="token">
+      Access Token:
+      <span class="saved-indicator" id="tokenSaved" style="display: none;">✓ Đã lưu</span>
+    </label>
+    <textarea id="token" placeholder="Nhập Bearer token từ MISA..."></textarea>
+    <div class="info">Lấy từ DevTools → Network → Authorization header</div>
+  </div>
+  
+  <div class="form-group">
+    <label for="context">
+      X-MISA-Context:
+      <span class="saved-indicator" id="contextSaved" style="display: none;">✓ Đã lưu</span>
+    </label>
+    <input type="text" id="context" placeholder="Nhập x-misa-context...">
+    <div class="info">Lấy từ DevTools → Network → x-misa-context header</div>
+  </div>
+  
+  <button id="send">Tạo hóa đơn</button>
+  
+  <div id="status" class="status"></div>
 
-  <script>
-    document.getElementById("send").onclick = () => {
-      // Gửi message đến content script (không phải background)
-      chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: "CREATE_INVOICE" }, function(response) {
-          if (chrome.runtime.lastError) {
-            console.error("Error:", chrome.runtime.lastError);
-            alert("❌ Lỗi: " + chrome.runtime.lastError.message);
-          } else if (response && !response.success) {
-            alert("❌ Lỗi: " + response.error);
-          }
-        });
-      });
-    };
-  </script>
+  <script src="popup.js"></script>
 </body>
 </html>

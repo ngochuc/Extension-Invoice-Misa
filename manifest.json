@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "My Chrome Extension",
-  "version": "1.0.0",
+  "name": "Chúc pro",
+  "version": "1.0.3",
   "description": "Một Chrome extension đơn giản sử dụng Manifest V3",
   "permissions": [
     "activeTab",
@@ -28,8 +28,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "matches": ["https://actapp.misa.vn/*"],
+      "js": ["payload-builder.js", "content.js"],
+      "run_at": "document_end"
     }
   ],
   "icons": {
