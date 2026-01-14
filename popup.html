@@ -25,22 +25,6 @@
     <input type="text" id="context" placeholder="Nhập x-misa-context...">
     <div class="info">Lấy từ DevTools → Network → x-misa-context header</div>
   </div>
-
-  <div class="form-group">
-    <label for="invoiceIds">
-      Danh sách Invoice IDs:
-    </label>
-    <textarea id="invoiceIds" placeholder="Nhập các invoice ID, mỗi ID một dòng&#10;Ví dụ:&#10;5543&#10;5544&#10;5545"></textarea>
-    <div class="info">Mỗi invoice ID một dòng. Sẽ xử lý tuần tự với delay 2-3 giây</div>
-  </div>
-
-  <div class="form-group">
-    <label for="delay">
-      Delay giữa các request (giây):
-    </label>
-    <input type="number" id="delay" value="3" min="1" max="10">
-    <div class="info">Thời gian chờ giữa mỗi hóa đơn để tránh bị chặn</div>
-  </div>
   
   <button id="send">Tạo hóa đơn</button>
   

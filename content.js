@@ -11,9 +11,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "CREATE_INVOICE") {
     // Xử lý async function với Promise
     createInvoiceFlow(msg.misaConfig)
-      .then(() => {
-        console.log('Invoice creation successful');
-        sendResponse({ success: true });
+      .then((result) => {
+        console.log('Invoice creation completed:', result);
+        sendResponse({ 
+          success: true,
+          total: result.total,
+          successCount: result.successCount,
+          failedCount: result.failedCount,
+          successInvoices: result.successInvoices,
+          failedInvoices: result.failedInvoices
+        });
       })
       .catch((error) => {
         console.error("Error in createInvoiceFlow:", error);
@@ -25,113 +32,272 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// Flow chính tạo hóa đơn
+// Flow chính tạo hóa đơn - Xử lý nhiều invoices với delay
 async function createInvoiceFlow(misaConfig) {
   try {
-    // 1. Lấy dữ liệu từ API của bạn (qua background)
-    console.log('Requesting data from background script...');
-
+    const { token, context } = misaConfig;
+    
+    if (!token || !context) {
+      throw new Error("Thiếu thông tin Token hoặc Context!");
+    }
+    
+    // 1. Lấy danh sách invoices (1 lần duy nhất)
+    console.log('📥 Fetching invoices from API...');
     const myDataResponse = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: "GET_MY_API_DATA" }, (response) => {
         if (chrome.runtime.lastError) {
-          reject(new Error('Background script error: ' + chrome.runtime.lastError.message));
+          reject(new Error(chrome.runtime.lastError.message));
           return;
         }
         resolve(response);
       });
     });
-
-    console.log('Background response:', myDataResponse);
-
-    if (!myDataResponse) {
-      throw new Error("Không nhận được phản hồi từ background script");
+    
+    if (!myDataResponse || !myDataResponse.success) {
+      throw new Error("Lỗi lấy dữ liệu: " + (myDataResponse?.error || 'Unknown error'));
     }
-
-    if (!myDataResponse.success) {
-      throw new Error("Lỗi lấy dữ liệu từ API: " + (myDataResponse.error || 'Unknown error'));
+    
+    const invoices = myDataResponse.data; // Mảng invoices
+    
+    if (!invoices || !Array.isArray(invoices) || invoices.length === 0) {
+      throw new Error("Không có invoice nào cần tạo");
     }
-
-    const myData = myDataResponse.data;
-    console.log("DATA FROM YOUR API:", myData);
-
-    // Validate data structure
-    if (!myData) {
-      throw new Error("Dữ liệu từ API trống");
-    }
-
-    if (!myData.items || !Array.isArray(myData.items) || myData.items.length === 0) {
-      throw new Error("Không có items trong dữ liệu từ API hoặc items không phải là mảng");
-    }
-
-    // 2. Sử dụng token và context từ popup
-    const { token, context } = misaConfig;
-
-    if (!token || !context) {
-      throw new Error("Thiếu thông tin Token hoặc Context!");
-    }
-
-    console.log("MISA Config:", {
-      token: token?.substring(0, 20) + "...",
-      context
+    
+    console.log(`📦 Got ${invoices.length} invoices to process`);
+    
+    // Send progress: start
+    sendProgressUpdate({
+      status: 'start',
+      total: invoices.length
     });
-
-    console.log(`Processing ${myData.items.length} items...`);
-
-    const refno = await getNextRefNo(token, context);
-
-    // 4. Lặp qua từng item và lấy thông tin inventory item từ MISA
-    const inventoryItems = [];
-
-    for (let i = 0; i < myData.items.length; i++) {
-      const myDataItem = myData.items[i];
-      console.log(`Getting inventory for item ${i + 1}: ${myDataItem.productCode}`);
-
-      const inventoryItem = await getInventoryItemFromMISA(token, context, myDataItem.productCode);
-      if (!inventoryItem) {
-        throw new Error(`Không tìm thấy sản phẩm có mã: ${myDataItem.productCode} trong MISA`);
+    
+    let successCount = 0;
+    let failedCount = 0;
+    const failedInvoices = []; // Lưu danh sách failed để log
+    const successInvoices = []; // Lưu danh sách success với misa_code
+    
+    // 2. Loop qua từng invoice với delay
+    for (let i = 0; i < invoices.length; i++) {
+      const myData = invoices[i];
+      
+      try {
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`🔄 Processing invoice ${i + 1}/${invoices.length}`);
+        console.log(`   Invoice ID: ${myData.id}`);
+        console.log(`   Order Code: ${myData.order_code}`);
+        console.log(`   Buyer: ${myData.buyer}`);
+        console.log(`   Items: ${myData.items.length}`);
+        console.log(`${'='.repeat(60)}`);
+        
+        // Send progress: processing
+        sendProgressUpdate({
+          status: 'processing',
+          current: i + 1,
+          total: invoices.length,
+          invoiceId: myData.id,
+          orderCode: myData.order_code
+        });
+        
+        // Validate invoice data
+        if (!myData.items || !Array.isArray(myData.items) || myData.items.length === 0) {
+          throw new Error("Invoice không có items");
+        }
+        
+        // Lấy refno
+        const refno = await getNextRefNo(token, context);
+        console.log(`📋 RefNo: BH=${refno[353]}, XK=${refno[202]}`);
+        
+        // Lấy inventory items từ MISA
+        const inventoryItems = [];
+        for (let j = 0; j < myData.items.length; j++) {
+          const myDataItem = myData.items[j];
+          console.log(`  📦 Getting inventory ${j + 1}/${myData.items.length}: ${myDataItem.productCode}`);
+          
+          const inventoryItem = await getInventoryItemFromMISA(token, context, myDataItem.productCode);
+          if (!inventoryItem) {
+            throw new Error(`Không tìm thấy sản phẩm: ${myDataItem.productCode}`);
+          }
+          
+          inventoryItems.push({ myDataItem, inventoryItem });
+          
+          // Delay nhỏ giữa các item lookup
+          if (j < myData.items.length - 1) {
+            await sleep(300);
+          }
+        }
+        
+        console.log(`  ✅ All ${inventoryItems.length} items found`);
+        
+        // Build payload
+        const payload = buildCompletePayload({ myData, inventoryItems, refno });
+        
+        // Gửi MISA
+        console.log(`  📤 Sending to MISA...`);
+        const response = await fetch("https://actapp.misa.vn/g1/api/sa/v1/sa_voucher/save_full", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token,
+            "x-misa-context": context
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          console.log(`  ✅ Invoice ${myData.id} created successfully on MISA`);
+          
+          // 🎯 CALLBACK: Đánh dấu invoice đã tạo xong
+          await markInvoiceAsCreated(myData.id, refno[353]);
+          
+          successCount++;
+          
+          // Lưu thông tin success invoice
+          successInvoices.push({
+            id: myData.id,
+            order_code: myData.order_code,
+            buyer: myData.buyer,
+            misa_code: refno[353]
+          });
+          
+          // Send progress: success
+          sendProgressUpdate({
+            status: 'success',
+            current: i + 1,
+            total: invoices.length,
+            invoiceId: myData.id,
+            orderCode: myData.order_code
+          });
+        } else {
+          throw new Error(result.message || result.error || JSON.stringify(result));
+        }
+        
+      } catch (error) {
+        // ❌ CHỈ LOG RA, KHÔNG CALLBACK
+        console.error(`\n${'='.repeat(60)}`);
+        console.error(`❌ Invoice ${myData.id} FAILED`);
+        console.error(`   Order Code: ${myData.order_code || 'N/A'}`);
+        console.error(`   Buyer: ${myData.buyer || 'N/A'}`);
+        console.error(`   Error: ${error.message}`);
+        console.error(`${'='.repeat(60)}`);
+        
+        failedCount++;
+        failedInvoices.push({
+          id: myData.id,
+          order_code: myData.order_code,
+          buyer: myData.buyer,
+          error: error.message
+        });
+        
+        // Send progress: error
+        sendProgressUpdate({
+          status: 'error',
+          current: i + 1,
+          total: invoices.length,
+          invoiceId: myData.id,
+          orderCode: myData.order_code,
+          error: error.message
+        });
       }
-
-      inventoryItems.push({
-        myDataItem,
-        inventoryItem
+      
+      // 3. DELAY giữa các invoice (quan trọng!)
+      if (i < invoices.length - 1) {
+        console.log(`\n⏳ Waiting 3 seconds before next invoice...\n`);
+        await sleep(3000); // 3 giây
+      }
+    }
+    
+    // 4. Tổng kết và log
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`📊 SUMMARY:`);
+    console.log(`   Total: ${invoices.length}`);
+    console.log(`   ✅ Success: ${successCount}`);
+    console.log(`   ❌ Failed: ${failedCount}`);
+    console.log(`${'='.repeat(60)}`);
+    
+    if (successInvoices.length > 0) {
+      console.log(`\n✅ SUCCESS INVOICES:`);
+      successInvoices.forEach((inv, idx) => {
+        console.log(`\n${idx + 1}. Invoice ID: ${inv.id}`);
+        console.log(`   Order Code: ${inv.order_code}`);
+        console.log(`   Buyer: ${inv.buyer}`);
+        console.log(`   MISA Code: ${inv.misa_code}`);
       });
+      console.log(`\n${'='.repeat(60)}`);
     }
-
-    console.log("ALL INVENTORY ITEMS:", inventoryItems);
-
-    // 6. Build payload hoàn chỉnh với mảng items (sử dụng sa_voucher format)
-    const payload = buildCompletePayload({
-      myData,
-      inventoryItems,
-      refno
-    });
-
-    console.log("COMPLETE PAYLOAD:", JSON.stringify(payload, null, 2));
-
-    // 7. Gửi request tạo sa_voucher (không phải sa_invoice)
-    const response = await fetch("https://actapp.misa.vn/g1/api/sa/v1/sa_voucher/full", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + token,
-        "x-misa-context": context
-      },
-      body: JSON.stringify(payload)
-    });
-
-    const result = await response.json();
-
-    if (response.ok) {
-      console.log("SUCCESS:", result);
-      // Không alert ở đây, để popup xử lý
-    } else {
-      throw new Error(result.message || result.error || JSON.stringify(result));
+    
+    if (failedInvoices.length > 0) {
+      console.log(`\n❌ FAILED INVOICES:`);
+      failedInvoices.forEach((inv, idx) => {
+        console.log(`\n${idx + 1}. Invoice ID: ${inv.id}`);
+        console.log(`   Order Code: ${inv.order_code}`);
+        console.log(`   Buyer: ${inv.buyer}`);
+        console.log(`   Error: ${inv.error}`);
+      });
+      console.log(`\n${'='.repeat(60)}`);
     }
-
+    
+    // Send progress: complete
+    sendProgressUpdate({
+      status: 'complete',
+      total: invoices.length,
+      successCount: successCount,
+      failedCount: failedCount
+    });
+    
+    return { 
+      success: true, 
+      total: invoices.length,
+      successCount,
+      failedCount,
+      successInvoices,
+      failedInvoices
+    };
+    
   } catch (error) {
     console.error("CONTENT SCRIPT ERROR:", error);
-    throw error; // Re-throw để popup có thể catch
+    throw error;
   }
+}
+
+// Helper: Send progress update to popup
+function sendProgressUpdate(data) {
+  chrome.runtime.sendMessage({
+    type: 'PROGRESS_UPDATE',
+    data: data
+  });
+}
+
+// Helper: Sleep function
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper: Đánh dấu invoice đã tạo thành công
+async function markInvoiceAsCreated(invoiceId, misaCode) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: "MARK_INVOICE_CREATED",
+      invoiceId: invoiceId,
+      misaCode: misaCode
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(`⚠️ Failed to mark invoice ${invoiceId}:`, chrome.runtime.lastError);
+        // Không reject, vì invoice đã tạo thành công trên MISA rồi
+        resolve(null);
+        return;
+      }
+      
+      if (response && response.success) {
+        console.log(`  ✅ Invoice ${invoiceId} marked as created in your system`);
+        resolve(response.data);
+      } else {
+        console.error(`⚠️ Failed to mark invoice ${invoiceId}:`, response?.error);
+        resolve(null);
+      }
+    });
+  });
 }
 
 // API lấy thông tin inventory item từ MISA
@@ -204,7 +370,7 @@ async function getInventoryItemFromMISA(token, context, productCode) {
     console.log('- result.Data.PageData is array:', Array.isArray(result.Data?.PageData));
     console.log('- result.Data.PageData length:', result.Data?.PageData?.length || 0);
 
-    if (result.ErrorsMessage) {
+    if (result.ErrorsMessage && result.ErrorsMessage.length > 0) {
       console.error("❌ MISA API Errors:", result.ErrorsMessage);
     }
 
@@ -419,7 +585,7 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
   // Tính tổng các giá trị từ tất cả detail objects
   const totalSaleAmount = detailObjects.reduce((sum, detail) => sum + detail.amount, 0);
   const totalDiscountAmount = detailObjects.reduce((sum, detail) => sum + detail.discount_amount, 0);
-  const totalVatAmount = detailObjects.reduce((sum, detail) => sum + detail.vat_amount, 0);
+  const totalVatAmount = Math.floor(detailObjects.reduce((sum, detail) => sum + detail.vat_amount, 0));
   const totalAmount = totalSaleAmount - totalDiscountAmount + totalVatAmount;
 
   // Tạo payload hoàn chỉnh theo cấu trúc sa_voucher
@@ -616,7 +782,7 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
       "ip": null,
       "action": 1,
       "action_name": "Thêm",
-      "reference": "Số chứng từ: BH00300\nSố phiếu xuất: XK00304\n", // refno
+      "reference": `Số chứng từ: ${refno[353]}\nSố phiếu xuất: ${refno[202]}\n`,
       "description": `- Số dòng: ${detailObjects.length} \n- Tổng số tiền: ${totalAmount}. (Extension API)`,
       "time": null,
       "state": 1,
