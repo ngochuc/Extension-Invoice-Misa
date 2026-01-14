@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Chúc pro",
-  "version": "1.0.3",
-  "description": "Một Chrome extension đơn giản sử dụng Manifest V3",
+  "version": "1.0.5",
+  "description": "A super premium VIP Chrome extension — make the most of it!",
   "permissions": [
     "activeTab",
     "storage",

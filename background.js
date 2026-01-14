@@ -30,7 +30,7 @@ async function getInvoiceDataFromMyAPI() {
   console.log('🚀 Starting API call to your server...');
   
   try {
-    const apiUrl = 'https://rtapi.trungtamsach.vn/api/v1/invoices/220';
+    const apiUrl = 'https://rtapi.trungtamsach.vn/api/v1/invoices/5543';
     const token = 'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NTA1NTc1NzEsImlzcyI6ImFwaS5jb21wYW55IiwiYXVkIjoiYXBpLmNsaWVudF9uYW1lIiwiaWQiOjQzLCJlbWFpbCI6ImN1b25ndnAyMzAyQGdtYWlsLmNvbSIsImZpcnN0X25hbWUiOiJDxrDhu51uZyIsImxhc3RfbmFtZSI6Ik5ndXnhu4VuIE3huqFuaCIsInVzZXJuYW1lIjoiQ3Vvbmc2NjgiLCJhdmF0YXIiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJeDZrck1NRERwNjJqVHRlWi0teVF4MGJlbzhHc0VaLTI4ZWZjR2YxVmJRX0ZIeUxnNz1zOTYtYyIsImdwdF90b2tlbiI6ImU2ZmQ5ZmU1YzhlZmMxOThiNDA3ZTgyODFiMjc5NzUwIiwicm9sZSI6InJvb3RfYWRtaW4iLCJpc19ndWVzdCI6bnVsbH0.fwgoRcsUs4IHGQbif-NpWhiydRxMeiQrnfR-aOp0E9Y'
     
     console.log('📡 API URL:', apiUrl);
@@ -81,6 +81,8 @@ async function getInvoiceDataFromMyAPI() {
       console.log('- invoice_items length:', actualData.invoice_items.length);
       console.log('- first item:', actualData.invoice_items[0]);
     }
+
+    console.log('📊 Response create at:', actualData.invoice?.created_at)
     
     // Map dữ liệu từ API response của bạn
     const mappedData = {
@@ -89,14 +91,15 @@ async function getInvoiceDataFromMyAPI() {
       paymentMethod: actualData.invoice?.payment_method === 'cash_on_delivery' ? 'TM/CK' : 'TM/CK',
       company_address: actualData.invoice?.company_address || '',
       phone: actualData.invoice?.phone || '',
-      create_at: new Date(actualData.invoice?.create_at).toISOString() || new Date().toISOString(),
+      create_at: new Date(actualData.invoice?.created_at).toISOString() || new Date().toISOString(),
 
+      
       // Mảng items - mỗi item có thông tin riêng
       items: actualData.invoice_items?.map((item, index) => {
         console.log(`🔄 Mapping item ${index + 1}:`, item);
         
         // Tính toán từ dữ liệu thực
-        const price = parseFloat(item.price) || 0;
+        let price = parseFloat(item.price) || 0;
         const vatRate = parseFloat(item.vat_rate) || 0;
         const quantity = parseInt(item.quantity) || 1;
         let item_id = item.item_id;
@@ -105,6 +108,15 @@ async function getInvoiceDataFromMyAPI() {
           item_id = 138609
         } else if (!item_id && item.item_code == "DV-DONG-GOI") {
           item_id = 138463
+        } else if (!item_id && item.item_code == "PHI_SAN") {
+          item_id = 138608
+        }
+
+        if ( vatRate > 0 ) {
+          price = Math.ceil(price / (1 + vatRate / 100));
+          if( !item_id ) {  // dịch vụ lấy giá gốc không cần tính ngược từ vatRate
+            price = parseFloat(item.original_price);
+          }
         }
         
         return {

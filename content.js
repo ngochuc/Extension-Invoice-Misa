@@ -77,6 +77,8 @@ async function createInvoiceFlow(misaConfig) {
 
     console.log(`Processing ${myData.items.length} items...`);
 
+    const refno = await getNextRefNo(token, context);
+
     // 4. Lặp qua từng item và lấy thông tin inventory item từ MISA
     const inventoryItems = [];
 
@@ -100,7 +102,8 @@ async function createInvoiceFlow(misaConfig) {
     // 6. Build payload hoàn chỉnh với mảng items (sử dụng sa_voucher format)
     const payload = buildCompletePayload({
       myData,
-      inventoryItems
+      inventoryItems,
+      refno
     });
 
     console.log("COMPLETE PAYLOAD:", JSON.stringify(payload, null, 2));
@@ -251,18 +254,29 @@ async function getInventoryItemFromMISA(token, context, productCode) {
   }
 }
 
-async function getNextRefNo(token) {
+async function getNextRefNo(token, context) {
     const url = "https://actapp.misa.vn/g1/api/refno/v1/refno/next_value?categories=353_101_150_202&branch_id=a4c49e6a-ccd7-413a-94b0-8349d1ccbb22&display_on_book=0";
 
     try {
         const response = await fetch(url, {
             "headers": {
                 "accept": "application/json, text/plain, */*",
-                "authorization": "Bearer "  + token// Token của bạn
+                "authorization": "Bearer "  + token,// Token của bạn
+                "x-misa-context": context
             },
             "method": "GET"
         });
         const result = await response.json();
+        const data = result.Data;
+
+        if (!data || !data[353]) {
+            throw new Error("Không tìm thấy số chứng từ phiếu bán hàng");
+        }
+
+        if (!data || !data[202]) {
+            throw new Error("Không tìm thấy số chứng từ phiếu xuất kho");
+        }
+
         // result.Data sẽ chứa các số mới như { "353": "BH001", "202": "XK001", ... }
         return result.Data;
     } catch (error) {
@@ -271,7 +285,7 @@ async function getNextRefNo(token) {
 }
 
 // Build payload hoàn chỉnh theo template mới (sa_voucher)
-function buildCompletePayload({ myData, inventoryItems}) {
+function buildCompletePayload({ myData, inventoryItems, refno}) {
   const currentDate = myData.create_at;
 
   // Tạo mảng detail objects từ inventoryItems
@@ -483,7 +497,7 @@ function buildCompletePayload({ myData, inventoryItems}) {
           "total_export_tax_amount": 0,
           "caba_amount": 0,
           "caba_amount_oc": 0,
-          "refno_finance": "BH00300",// refno
+          "refno_finance": refno[353],// refno
           "payer": myData.buyer || "Noname",
           "journal_memo": `Bán hàng Khách lẻ`,
           "currency_id": "VND",
@@ -530,7 +544,7 @@ function buildCompletePayload({ myData, inventoryItems}) {
           "in_reforder": currentDate,
           "is_sale_with_outward": true,
           "total_amount_finance": 0,
-          "refno_finance": "XK00304",// refno XK00304
+          "refno_finance": refno[202],// refno XK00304
           "state": 1,
           "ik_stock_ids": "51a49d53-2fea-4e56-8cdd-bf41af64a0bf",
           "is_sale_with_outward_enum": 1,
@@ -567,7 +581,7 @@ function buildCompletePayload({ myData, inventoryItems}) {
       "total_export_tax_amount": 0,
       "caba_amount": 0,
       "caba_amount_oc": 0,
-      "refno_finance": "BH00300",// refno
+      "refno_finance": refno[353],// refno
       "payer": myData.buyer || "Noname",
       "journal_memo": `Bán hàng Khách lẻ`,
       "currency_id": "VND",
