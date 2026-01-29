@@ -29,7 +29,7 @@
   "content_scripts": [
     {
       "matches": ["https://actapp.misa.vn/*"],
-      "js": ["payload-builder.js", "content.js"],
+      "js": ["xlsx.full.min.js", "payload-builder.js", "content.js"],
       "run_at": "document_end"
     }
   ],

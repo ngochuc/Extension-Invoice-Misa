@@ -28,6 +28,16 @@ body {
       transition: border-color 0.2s;
     }
     
+    input[type="number"] {
+      -moz-appearance: textfield;
+    }
+    
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    
     input:focus, textarea:focus {
       outline: none;
       border-color: #4CAF50;
@@ -142,6 +152,15 @@ body {
     
     .progress-item.processing {
       color: #007bff;
+    }
+    
+    .progress-item.stopped {
+      color: #ff6b6b;
+      font-weight: 600;
+      background-color: #fff5f5;
+      padding: 6px;
+      border-radius: 3px;
+      margin: 4px 0;
     }
     
     .info {

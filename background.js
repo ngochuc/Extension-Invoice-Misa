@@ -1,10 +1,28 @@
 // Background script - chỉ gọi API external của bạn
 
+// Environment configuration
+const ENV = 'production'; // 'development' hoặc 'production'
+const API_CONFIG = {
+  development: {
+    baseUrl: 'http://localhost:3002',
+    token: 'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NTA1NTc1NzEsImlzcyI6ImFwaS5jb21wYW55IiwiYXVkIjoiYXBpLmNsaWVudF9uYW1lIiwiaWQiOjQzLCJlbWFpbCI6ImN1b25ndnAyMzAyQGdtYWlsLmNvbSIsImZpcnN0X25hbWUiOiJDxrDhu51uZyIsImxhc3RfbmFtZSI6Ik5ndXnhu4VuIE3huqFuaCIsInVzZXJuYW1lIjoiQ3Vvbmc2NjgiLCJhdmF0YXIiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJeDZrck1NRERwNjJqVHRlWi0teVF4MGJlbzhHc0VaLTI4ZWZjR2YxVmJRX0ZIeUxnNz1zOTYtYyIsImdwdF90b2tlbiI6ImU2ZmQ5ZmU1YzhlZmMxOThiNDA3ZTgyODFiMjc5NzUwIiwicm9sZSI6InJvb3RfYWRtaW4iLCJpc19ndWVzdCI6bnVsbH0.fwgoRcsUs4IHGQbif-NpWhiydRxMeiQrnfR-aOp0E9Y'
+  },
+  production: {
+    baseUrl: 'https://rtapi.trungtamsach.vn',
+    token: 'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NTA1NTc1NzEsImlzcyI6ImFwaS5jb21wYW55IiwiYXVkIjoiYXBpLmNsaWVudF9uYW1lIiwiaWQiOjQzLCJlbWFpbCI6ImN1b25ndnAyMzAyQGdtYWlsLmNvbSIsImZpcnN0X25hbWUiOiJDxrDhu51uZyIsImxhc3RfbmFtZSI6Ik5ndXnhu4VuIE3huqFuaCIsInVzZXJuYW1lIjoiQ3Vvbmc2NjgiLCJhdmF0YXIiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJeDZrck1NRERwNjJqVHRlWi0teVF4MGJlbzhHc0VaLTI4ZWZjR2YxVmJRX0ZIeUxnNz1zOTYtYyIsImdwdF90b2tlbiI6ImU2ZmQ5ZmU1YzhlZmMxOThiNDA3ZTgyODFiMjc5NzUwIiwicm9sZSI6InJvb3RfYWRtaW4iLCJpc19ndWVzdCI6bnVsbH0.fwgoRcsUs4IHGQbif-NpWhiydRxMeiQrnfR-aOp0E9Y'
+  }
+};
+
+// Get current environment config
+const currentConfig = API_CONFIG[ENV];
+console.log(`🌍 Running in ${ENV} mode - API: ${currentConfig.baseUrl}`);
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   console.log('🎯 Background received message:', msg);
   
   if (msg.type === "GET_MY_API_DATA") {
-    getInvoiceDataFromMyAPI()
+    const invoiceLimit = msg.invoiceLimit || 10;
+    getInvoiceDataFromMyAPI(invoiceLimit)
       .then((data) => {
         sendResponse({ success: true, data: data });
       })
@@ -26,13 +44,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-async function getInvoiceDataFromMyAPI() {
-  console.log('🚀 Fetching pending invoices from API...');
+async function getInvoiceDataFromMyAPI(invoiceLimit = 10) {
+  console.log(`🚀 Fetching pending invoices from API (limit: ${invoiceLimit})...`);
   
   try {
-    const apiUrl = 'https://rtapi.trungtamsach.vn/api/v1/invoices/pending_misa?exclude_discount=true';
-    // const apiUrl = 'http://localhost:3002/api/v1/invoices/pending_misa?exclude_discount=true';
-    const token = 'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NTA1NTc1NzEsImlzcyI6ImFwaS5jb21wYW55IiwiYXVkIjoiYXBpLmNsaWVudF9uYW1lIiwiaWQiOjQzLCJlbWFpbCI6ImN1b25ndnAyMzAyQGdtYWlsLmNvbSIsImZpcnN0X25hbWUiOiJDxrDhu51uZyIsImxhc3RfbmFtZSI6Ik5ndXnhu4VuIE3huqFuaCIsInVzZXJuYW1lIjoiQ3Vvbmc2NjgiLCJhdmF0YXIiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJeDZrck1NRERwNjJqVHRlWi0teVF4MGJlbzhHc0VaLTI4ZWZjR2YxVmJRX0ZIeUxnNz1zOTYtYyIsImdwdF90b2tlbiI6ImU2ZmQ5ZmU1YzhlZmMxOThiNDA3ZTgyODFiMjc5NzUwIiwicm9sZSI6InJvb3RfYWRtaW4iLCJpc19ndWVzdCI6bnVsbH0.fwgoRcsUs4IHGQbif-NpWhiydRxMeiQrnfR-aOp0E9Y'
+    const apiUrl = `${currentConfig.baseUrl}/api/v1/invoices/pending_misa?exclude_discount=true&limit=${invoiceLimit}`;
+    // const apiUrl = `${currentConfig.baseUrl}/api/v1/invoices/272`;
+    const token = currentConfig.token;
+    
+    console.log(`📡 API URL: ${apiUrl}`);
     
     const response = await fetch(apiUrl, {
       method: 'GET',
@@ -69,6 +89,15 @@ async function getInvoiceDataFromMyAPI() {
       const invoice = invoiceData.invoice;
       const items = invoiceData.invoice_items;
       
+      // 🚨 Kiểm tra item đặc biệt
+      const specialItems = items.filter(item => 
+        ['PHI-VAN-CHUYEN', 'DV-DONG-GOI', 'PHI_SAN'].includes(item.item_code)
+      );
+      
+      const hasSpecialItems = specialItems.length > 0;
+      const invoiceSeries = new Date(invoice.updated_at).getFullYear() == 2026 ? '1C26MAA' : '1C25MAA';
+      console.log
+      
       return {
         id: invoice.id,
         order_code: invoice.order_code,
@@ -76,8 +105,12 @@ async function getInvoiceDataFromMyAPI() {
         buyer: invoice.buyer_full_name,
         paymentMethod: invoice.payment_method === 'cash_on_delivery' ? 'TM/CK' : 'TM/CK',
         company_address: invoice.company_address,
+        invoiceNo: parseInt(invoice.invoice_no),
+        invoiceSeries: invoiceSeries,
         phone: invoice.phone,
-        create_at: new Date(invoice.created_at).toISOString(),
+        create_at: new Date(invoice.signed_at).toISOString(),
+        // hasSpecialItems: hasSpecialItems, // 🚨 Flag để content script kiểm tra
+        // specialItemCodes: hasSpecialItems ? specialItems.map(i => i.item_code) : [],
         
         items: items.map(item => {
           let price = parseFloat(item.price) || 0;
@@ -95,18 +128,20 @@ async function getInvoiceDataFromMyAPI() {
           
           // Tính ngược giá từ VAT
           if (vatRate > 0) {
-            price = Math.ceil(price / (1 + vatRate / 100));
-            if (!item_id) {
+            price = Math.round(price / (1 + vatRate / 100));
+            if (item_id == 138609 || item_id == 138463 || item_id == 138608) {
               price = parseFloat(item.original_price);
             }
           }
-          
+
           return {
             productCode: item_id,
             name: item.item_name,
             quantity: parseInt(item.quantity) || 1,
             price: price,
-            vatRate: vatRate,
+            originalPrice: parseFloat(item.original_price),
+            vatAmount: item.vat_amount,
+            totalAmount: item.total_amount,
             discountRate: 0,
             description: item.item_name
           };
@@ -122,9 +157,8 @@ async function getInvoiceDataFromMyAPI() {
 
 // Callback đánh dấu invoice đã tạo
 async function markInvoiceCreated(invoiceId, misaCode) {
-  const apiUrl = `https://rtapi.trungtamsach.vn/api/v1/invoices/mark_misa_created`;
-  // const apiUrl = `http://localhost:3002/api/v1/invoices/mark_misa_created`;
-  const token = 'eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3NTA1NTc1NzEsImlzcyI6ImFwaS5jb21wYW55IiwiYXVkIjoiYXBpLmNsaWVudF9uYW1lIiwiaWQiOjQzLCJlbWFpbCI6ImN1b25ndnAyMzAyQGdtYWlsLmNvbSIsImZpcnN0X25hbWUiOiJDxrDhu51uZyIsImxhc3RfbmFtZSI6Ik5ndXnhu4VuIE3huqFuaCIsInVzZXJuYW1lIjoiQ3Vvbmc2NjgiLCJhdmF0YXIiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJeDZrck1NRERwNjJqVHRlWi0teVF4MGJlbzhHc0VaLTI4ZWZjR2YxVmJRX0ZIeUxnNz1zOTYtYyIsImdwdF90b2tlbiI6ImU2ZmQ5ZmU1YzhlZmMxOThiNDA3ZTgyODFiMjc5NzUwIiwicm9sZSI6InJvb3RfYWRtaW4iLCJpc19ndWVzdCI6bnVsbH0.fwgoRcsUs4IHGQbif-NpWhiydRxMeiQrnfR-aOp0E9Y'
+  const apiUrl = `${currentConfig.baseUrl}/api/v1/invoices/mark_misa_created`;
+  const token = currentConfig.token;
   
   console.log(`\n🔖 ========== MARKING INVOICE ==========`);
   console.log(`   Invoice ID: ${invoiceId}`);

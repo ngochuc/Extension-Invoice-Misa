@@ -10,9 +10,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.type === "CREATE_INVOICE") {
     // Xử lý async function với Promise
-    createInvoiceFlow(msg.misaConfig)
+    createInvoiceFlow(msg.misaConfig, msg.invoiceLimit)
       .then((result) => {
-        console.log('Invoice creation completed:', result);
         sendResponse({ 
           success: true,
           total: result.total,
@@ -33,7 +32,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // Flow chính tạo hóa đơn - Xử lý nhiều invoices với delay
-async function createInvoiceFlow(misaConfig) {
+async function createInvoiceFlow(misaConfig, invoiceLimit = 10) {
   try {
     const { token, context } = misaConfig;
     
@@ -44,7 +43,10 @@ async function createInvoiceFlow(misaConfig) {
     // 1. Lấy danh sách invoices (1 lần duy nhất)
     console.log('📥 Fetching invoices from API...');
     const myDataResponse = await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: "GET_MY_API_DATA" }, (response) => {
+      chrome.runtime.sendMessage({ 
+        type: "GET_MY_API_DATA",
+        invoiceLimit: invoiceLimit
+      }, (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
           return;
@@ -58,7 +60,7 @@ async function createInvoiceFlow(misaConfig) {
     }
     
     const invoices = myDataResponse.data; // Mảng invoices
-    
+
     if (!invoices || !Array.isArray(invoices) || invoices.length === 0) {
       throw new Error("Không có invoice nào cần tạo");
     }
@@ -80,15 +82,23 @@ async function createInvoiceFlow(misaConfig) {
     for (let i = 0; i < invoices.length; i++) {
       const myData = invoices[i];
       
-      try {
-        console.log(`\n${'='.repeat(60)}`);
-        console.log(`🔄 Processing invoice ${i + 1}/${invoices.length}`);
-        console.log(`   Invoice ID: ${myData.id}`);
-        console.log(`   Order Code: ${myData.order_code}`);
-        console.log(`   Buyer: ${myData.buyer}`);
-        console.log(`   Items: ${myData.items.length}`);
-        console.log(`${'='.repeat(60)}`);
+      // 🚨 KIỂM TRA ITEM ĐẶC BIỆT - DỪNG HOÀN TOÀN
+      if (myData.hasSpecialItems) {
+        // Send progress: stopped
+        sendProgressUpdate({
+          status: 'stopped',
+          current: i + 1,
+          total: invoices.length,
+          invoiceId: myData.id,
+          orderCode: myData.order_code,
+          specialItems: myData.specialItemCodes
+        });
         
+        // Throw error để dừng hoàn toàn
+        throw new Error(`Invoice #${myData.id} (${myData.order_code}) có item đặc biệt: ${myData.specialItemCodes.join(', ')}. Vui lòng xem xét trước khi tạo!`);
+      }
+      
+      try {
         // Send progress: processing
         sendProgressUpdate({
           status: 'processing',
@@ -111,7 +121,6 @@ async function createInvoiceFlow(misaConfig) {
         const inventoryItems = [];
         for (let j = 0; j < myData.items.length; j++) {
           const myDataItem = myData.items[j];
-          console.log(`  📦 Getting inventory ${j + 1}/${myData.items.length}: ${myDataItem.productCode}`);
           
           const inventoryItem = await getInventoryItemFromMISA(token, context, myDataItem.productCode);
           if (!inventoryItem) {
@@ -126,13 +135,10 @@ async function createInvoiceFlow(misaConfig) {
           }
         }
         
-        console.log(`  ✅ All ${inventoryItems.length} items found`);
-        
         // Build payload
         const payload = buildCompletePayload({ myData, inventoryItems, refno });
         
         // Gửi MISA
-        console.log(`  📤 Sending to MISA...`);
         const response = await fetch("https://actapp.misa.vn/g1/api/sa/v1/sa_voucher/save_full", {
           method: "POST",
           headers: {
@@ -146,8 +152,6 @@ async function createInvoiceFlow(misaConfig) {
         const result = await response.json();
         
         if (response.ok) {
-          console.log(`  ✅ Invoice ${myData.id} created successfully on MISA`);
-          
           // 🎯 CALLBACK: Đánh dấu invoice đã tạo xong
           await markInvoiceAsCreated(myData.id, refno[353]);
           
@@ -203,8 +207,8 @@ async function createInvoiceFlow(misaConfig) {
       
       // 3. DELAY giữa các invoice (quan trọng!)
       if (i < invoices.length - 1) {
-        console.log(`\n⏳ Waiting 3 seconds before next invoice...\n`);
-        await sleep(3000); // 3 giây
+        console.log(`\n⏳ Waiting 1 seconds before next invoice...\n`);
+        await sleep(1000); // 3 giây
       }
     }
     
@@ -219,12 +223,77 @@ async function createInvoiceFlow(misaConfig) {
     if (successInvoices.length > 0) {
       console.log(`\n✅ SUCCESS INVOICES:`);
       successInvoices.forEach((inv, idx) => {
-        console.log(`\n${idx + 1}. Invoice ID: ${inv.id}`);
-        console.log(`   Order Code: ${inv.order_code}`);
-        console.log(`   Buyer: ${inv.buyer}`);
-        console.log(`   MISA Code: ${inv.misa_code}`);
+        console.log(`${idx + 1}. ID: ${inv.id} | Order: ${inv.order_code} | MISA: ${inv.misa_code} | Buyer: ${inv.buyer}`);
       });
       console.log(`\n${'='.repeat(60)}`);
+      // Xuất file Excel cho success invoices
+      try {
+        console.log('📊 Creating Excel file for success invoices...');
+        
+        // Kiểm tra XLSX có sẵn không
+        if (typeof XLSX === 'undefined') {
+          console.error('❌ XLSX library not loaded');
+          throw new Error('XLSX library not available');
+        }
+        
+        const workbook = XLSX.utils.book_new();
+        
+        // Tạo worksheet data
+        const wsData = [
+          ['STT', 'Invoice ID', 'Order Code', 'MISA Code', 'Buyer', 'Status', 'Created At'],
+          ...successInvoices.map((inv, idx) => [
+            idx + 1,
+            inv.id,
+            inv.order_code,
+            inv.misa_code,
+            inv.buyer,
+            'Success',
+            new Date().toLocaleString('vi-VN')
+          ])
+        ];
+        
+        const worksheet = XLSX.utils.aoa_to_sheet(wsData);
+        
+        // Định dạng cột
+        const colWidths = [
+          { wch: 5 },   // STT
+          { wch: 12 },  // Invoice ID
+          { wch: 15 },  // Order Code
+          { wch: 12 },  // MISA Code
+          { wch: 30 },  // Buyer
+          { wch: 10 },  // Status
+          { wch: 20 }   // Created At
+        ];
+        worksheet['!cols'] = colWidths;
+        
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Success Invoices');
+        
+        // Tạo tên file với timestamp
+        const now = new Date();
+        const timestamp = now.toISOString().slice(0, 19).replace(/[:-]/g, '').replace('T', '_');
+        const filename = `MISA_Success_Invoices_${timestamp}.xlsx`;
+        
+        // Xuất file
+        XLSX.writeFile(workbook, filename);
+        console.log(`📊 Excel file exported: ${filename}`);
+        
+        // Send progress update về Excel export
+        sendProgressUpdate({
+          status: 'excel_exported',
+          filename: filename,
+          count: successInvoices.length
+        });
+        
+      } catch (excelError) {
+        console.error('❌ Error exporting Excel file:', excelError);
+        console.error('❌ Excel error stack:', excelError.stack);
+        
+        // Send progress update về Excel error
+        sendProgressUpdate({
+          status: 'excel_error',
+          error: excelError.message
+        });
+      }
     }
     
     if (failedInvoices.length > 0) {
@@ -303,10 +372,6 @@ async function markInvoiceAsCreated(invoiceId, misaCode) {
 // API lấy thông tin inventory item từ MISA
 async function getInventoryItemFromMISA(token, context, productCode) {
   try {
-    console.log(`🔍 Searching for product: ${productCode}`);
-    console.log(`🔑 Using token: ${token?.substring(0, 20)}...`);
-    console.log(`📋 Using context: ${context}`);
-
     const payloadInventoryItem = {
       sort: JSON.stringify([
         { property: 2157, desc: false, operand: 1 }
@@ -336,7 +401,6 @@ async function getInventoryItemFromMISA(token, context, productCode) {
       useSp: false
     };
 
-    console.log('📤 MISA Inventory Request Payload:', JSON.stringify(payloadInventoryItem, null, 2));
 
     const response = await fetch("https://actapp.misa.vn/g1/api/di/v1/inventory_item_get/paging_filter_inventory_item_new_v2", {
       method: "POST",
@@ -348,10 +412,6 @@ async function getInventoryItemFromMISA(token, context, productCode) {
       body: JSON.stringify(payloadInventoryItem)
     });
 
-    console.log('📊 MISA Inventory Response Status:', response.status);
-    console.log('📊 MISA Inventory Response StatusText:', response.statusText);
-    console.log('📊 MISA Inventory Response Headers:', Object.fromEntries(response.headers.entries()));
-
     if (!response.ok) {
       const errorText = await response.text();
       console.error("❌ MISA Inventory API Error Response:", errorText);
@@ -360,15 +420,10 @@ async function getInventoryItemFromMISA(token, context, productCode) {
     }
 
     const result = await response.json();
-    console.log("✅ MISA Inventory API Response:", JSON.stringify(result, null, 2));
 
     // Kiểm tra cấu trúc response
     console.log('🔍 Checking inventory response structure:');
     console.log('- result.Success:', result.Success);
-    console.log('- result.Data exists:', !!result.Data);
-    console.log('- result.Data.PageData exists:', !!result.Data?.PageData);
-    console.log('- result.Data.PageData is array:', Array.isArray(result.Data?.PageData));
-    console.log('- result.Data.PageData length:', result.Data?.PageData?.length || 0);
 
     if (result.ErrorsMessage && result.ErrorsMessage.length > 0) {
       console.error("❌ MISA API Errors:", result.ErrorsMessage);
@@ -382,12 +437,6 @@ async function getInventoryItemFromMISA(token, context, productCode) {
 
     if (result.Data && result.Data.PageData && result.Data.PageData.length > 0) {
       const item = result.Data.PageData[0];
-      console.log('📦 Found inventory item:', item);
-      console.log('- inventory_item_id:', item.inventory_item_id);
-      console.log('- inventory_item_code:', item.inventory_item_code);
-      console.log('- inventory_item_name:', item.inventory_item_name);
-      console.log('- unit_id:', item.unit_id);
-      console.log('- unit_name:', item.unit_name);
 
       const mappedItem = {
         inventory_item_id: item.inventory_item_id,
@@ -402,15 +451,10 @@ async function getInventoryItemFromMISA(token, context, productCode) {
           `[{"currency_id":"VND","unit_id":"${item.unit_id}","unit_name":"${item.unit_name}","unit_price":"0"}]`
       };
 
-      console.log('🎯 Mapped inventory item:', mappedItem);
       return mappedItem;
     }
 
     console.log("⚠️ No inventory item found with code:", productCode);
-    console.log("💡 Available items in response:", result.Data?.PageData?.map(item => ({
-      code: item.inventory_item_code,
-      name: item.inventory_item_name
-    })));
     return null;
 
   } catch (error) {
@@ -467,10 +511,20 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
     const discountAmount = amount * discountRate / 100;
 
     const vatRate = myDataItem.vatRate || 0;
-    const vatAmount = vatRate === -1 ? 0 : (amount - discountAmount) * vatRate / 100;
+    const vatAmount = myDataItem.vatAmount ? myDataItem.vatAmount : (amount - discountAmount) * vatRate / 100;
 
     // Tính thuế khấu trừ (2% của VAT)
     const deductionsTaxAmount = vatAmount * 0.02;
+
+    let sale_account = "5111";
+    if (myDataItem.productCode == 138463) { //DV-DONG-GOI
+      sale_account = "5113";
+    } else if (myDataItem.productCode == 138608) { //PHI_SAN
+      sale_account = "5118";
+    } else if (myDataItem.productCode == 138609) {
+      sale_account = "5114"
+    }
+
 
     return {
       "account_object_address": myData.company_address,
@@ -481,10 +535,10 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
       "amount_finance": 0,
       "amount_management": 0,
       "amount_oc": amount,
-      "credit_account": "5111",
+      "credit_account": sale_account,
       "debit_account": "131",
       "description": myDataItem.description || inventoryItem.inventory_item_name,
-      "discount_account": "5111",
+      "discount_account": sale_account,
       "discount_amount": discountAmount,
       "discount_amount_oc": discountAmount,
       "discount_rate": discountRate,
@@ -563,7 +617,7 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
       "exported_invoice_at_least_one": false,
       "relation_detail_sa_voucher_invoice": [],
       "is_delete_relation_invoice_detail": false,
-      "sale_account": "5111",
+      "sale_account": sale_account,
       "is_combo": false,
       "combo_type": 0,
       "inventory_item_cost_method": -1,
@@ -587,6 +641,8 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
   const totalDiscountAmount = detailObjects.reduce((sum, detail) => sum + detail.discount_amount, 0);
   const totalVatAmount = Math.floor(detailObjects.reduce((sum, detail) => sum + detail.vat_amount, 0));
   const totalAmount = totalSaleAmount - totalDiscountAmount + totalVatAmount;
+
+  console.log('mydata', myData)
 
   // Tạo payload hoàn chỉnh theo cấu trúc sa_voucher
   return [{
@@ -627,60 +683,73 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
           "SubKey": "sa_invoice_refid",
           "ReferenceKey": "voucher_refid",
           "IsUsingSubQuery": true
-        },
-        "Object": {
+        },   
+        "Object":{
+          // Thông tin khách hàng & Đối tượng
           "account_object_id": "2e09a780-d17f-47a7-bff2-eef23ea3b9b6",
-          "display_on_book": 0,
-          "reftype": 3560,
-          "inv_date": currentDate,
-          "is_posted": true,
-          "include_invoice": 1,
-          "exchange_rate": 1,
-          "account_object_name": "Khách lẻ",
-          "account_object_address": myData.company_address,
-          "payment_method": myData.paymentMethod || "TM/CK",
-          "discount_type": 0,
-          "state": 1,
           "account_object_code": "KLE",
-          "is_invoice_machine": false,
-          "employee_id": "98a6e8e5-5aeb-42f7-8238-8fbd1e34b1b3",
-          "employee_name": "CÔNG TY CỔ PHẦN ĐẦU TƯ GIÁO DỤC BẮC TRUNG NAM",
-          "outward_exported_status": 1,
+          "account_object_name": "Khách lẻ",
+          "account_object_address": myData.company_address || "123 ABc, Hà Nội",
+          "phone_number": myData.phone || "",
+          "payer": myData.buyer || "Chúc Test",
+          
+          // Thông tin định danh hóa đơn NGOÀI (Điểm khác biệt chính)
+          "inv_no": myData.invoiceNo,       // Biến động số hóa đơn bên ngoài của bạn
+          "inv_series": myData.invoiceSeries, // Biến động ký hiệu hóa đơn (VD: 1C26MAA)
+          "inv_template_no": myData.invoiceTemplate || "01GTKT0/001", 
+          "inv_date": currentDate,
+          "inv_type_id": 0,
+          
+          // Thông tin hạch toán
+          "reftype": 3560,
           "refdate": currentDate,
           "posted_date": currentDate,
-          "is_invoice_exported": true,
-          "is_paid": false,
+          "refno_finance": refno[353], // Lấy từ biến refno của bạn
+          "journal_memo": `Bán hàng Khách lẻ theo hóa đơn số ${myData.invoiceNo}`,
+          "is_posted": true,
+          "display_on_book": 0,
+          "currency_id": "VND",
+          "exchange_rate": 1,
+          "payment_method": myData.paymentMethod || "TM/CK",
+          
+          // Trạng thái hóa đơn (Rất quan trọng để MISA hiểu là hóa đơn ngoài)
+          "include_invoice": 1,
+          "is_invoice_exported": true,     // Đánh dấu đã xuất để không chờ meInvoice cấp số
+          "invoice_exported_status": 0,    // Trạng thái hóa đơn gốc
+          "outward_exported_status": 1,
           "is_sale_with_outward": true,
+          "caba_refno_finance": refno[202], 
+          "invoiced_amount": 0,
+          
+          // Thông tin tiền hàng (Dùng các biến động của bạn)
           "total_sale_amount_oc": totalSaleAmount,
           "total_sale_amount": totalSaleAmount,
-          "total_amount_oc": totalAmount,
-          "total_amount": totalAmount,
-          "total_discount_amount_oc": totalDiscountAmount,
-          "total_discount_amount": totalDiscountAmount,
           "total_vat_amount_oc": totalVatAmount,
           "total_vat_amount": totalVatAmount,
+          "total_amount_oc": totalAmount,
+          "total_amount": totalAmount,
+          "total_discount_amount_oc": totalDiscountAmount || 0,
+          "total_discount_amount": totalDiscountAmount || 0,
           "total_export_tax_amount_oc": 0,
           "total_export_tax_amount": 0,
           "caba_amount": 0,
           "caba_amount_oc": 0,
-          "refno_finance": refno[353],// refno
-          "payer": myData.buyer || "Noname",
-          "journal_memo": `Bán hàng Khách lẻ`,
-          "currency_id": "VND",
+          
+          // Các trường hệ thống khác
+          "discount_type": 0,
           "paid_type": 0,
-          "discount_rate_voucher": 0,
-          "employee_code": "NV000001",
-          "attachment_id_list_data": [],
+          "state": 1,
+          "is_invoice_machine": false,
           "is_follows_406": false,
           "tax_reduction_type": 0,
           "is_tax_reduction_type_43": false,
-          "invoiced_amount": 0,
-          "invoice_exported_status": 0,
           "dav_using_permision": true,
           "is_discount_invoice_123": false,
           "invoiveRefids": [],
           "invoiveRefidsDelete": [],
-          "MappingEinvoiceObjectList": []
+          "MappingEinvoiceObjectList": [],
+          "attachment_id_list_data": [],
+          "old_data": null
         }
       },
       {
@@ -730,6 +799,9 @@ function buildCompletePayload({ myData, inventoryItems, refno}) {
       "outward_exported_status": 1,
       "refdate": currentDate,
       "posted_date": currentDate,
+      "inv_no": myData.invoiceNo,       
+      "inv_series": myData.invoiceSeries, 
+      "inv_template_no": myData.invoiceTemplate || "01GTKT0/001", 
       "include_invoice": 1,
       "is_invoice_exported": true,
       "is_paid": false,

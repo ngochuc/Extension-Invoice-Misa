@@ -52,9 +52,15 @@ function setupAutoSave() {
 document.getElementById("send").onclick = function() {
   const token = document.getElementById('token').value.trim();
   const context = document.getElementById('context').value.trim();
+  const invoiceLimit = parseInt(document.getElementById('invoiceLimit').value) || 10;
   
   if (!token || !context) {
     showStatus('Vui lòng nhập đầy đủ Token và Context!', 'error');
+    return;
+  }
+  
+  if (invoiceLimit < 1 || invoiceLimit > 1000) {
+    showStatus('Số lượng hóa đơn phải từ 1 đến 1000!', 'error');
     return;
   }
   
@@ -84,7 +90,8 @@ document.getElementById("send").onclick = function() {
       misaConfig: {
         token: token,
         context: context
-      }
+      },
+      invoiceLimit: invoiceLimit
     }, function(response) {
       button.disabled = false;
       button.textContent = 'Tạo hóa đơn';
@@ -191,9 +198,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       addProgressLog(`✅ Invoice #${data.invoiceId} - ${data.orderCode} - Thành công`, 'success');
     } else if (data.status === 'error') {
       addProgressLog(`❌ Invoice #${data.invoiceId} - ${data.orderCode} - Lỗi: ${data.error}`, 'error');
+    } else if (data.status === 'stopped') {
+      addProgressLog(`\n🛑 DỪNG TẠO HÓA ĐƠN`, 'error');
+      addProgressLog(`Invoice #${data.invoiceId} - ${data.orderCode}`, 'error');
+      addProgressLog(`Có item đặc biệt: ${data.specialItems.join(', ')}`, 'error');
+      addProgressLog(`⚠️ Các invoice sau sẽ không được tạo. Vui lòng xem xét!`, 'error');
     } else if (data.status === 'complete') {
       updateProgress(data.total, data.total, 'Hoàn thành!');
       addProgressLog(`\n📊 Tổng kết: ${data.successCount} thành công, ${data.failedCount} thất bại`, 'info');
+    } else if (data.status === 'excel_exported') {
+      addProgressLog(`📊 Đã xuất file Excel: ${data.filename} (${data.count} records)`, 'success');
+    } else if (data.status === 'excel_error') {
+      addProgressLog(`❌ Lỗi xuất Excel: ${data.error}`, 'error');
     }
   }
 });
