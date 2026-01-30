@@ -95,7 +95,7 @@ async function getInvoiceDataFromMyAPI(invoiceLimit = 10) {
       );
       
       const hasSpecialItems = specialItems.length > 0;
-      const invoiceSeries = new Date(invoice.updated_at).getFullYear() == 2026 ? '1C26MAA' : '1C25MAA';
+      const invoiceSeries = new Date(invoice.signed_at).getFullYear() == 2026 ? '1C26MAA' : '1C25MAA';
       console.log
       
       return {
